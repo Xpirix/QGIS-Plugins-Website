@@ -513,6 +513,7 @@ def plugin_upload(request):
 class PluginDetailView(DetailView):
     model = Plugin
     queryset = Plugin.objects.all()
+    title = _("Plugin details")
 
     @method_decorator(ensure_csrf_cookie)
     def dispatch(self, *args, **kwargs):
@@ -542,6 +543,7 @@ class PluginDetailView(DetailView):
                 "stats_url": stats_url,
                 "rating": plugin.rating.get_rating(),
                 "votes": plugin.rating.votes,
+                "title": self.title,
             }
         )
         return context
@@ -832,29 +834,30 @@ class PluginsList(ListView):
     def get_queryset(self):
         qs = super(PluginsList, self).get_queryset()
         qs = self.get_filtered_queryset(qs)
-        sort_by = self.request.GET.get("sort", None)
-        if sort_by:
-            if sort_by[0] == "-":
-                _sort_by = sort_by[1:]
-            else:
-                _sort_by = sort_by
 
-            # Check if the sort criterion is a field or 'average_vote'
-            # or 'latest_version_date'
-            try:
-                (
-                    _sort_by == "average_vote"
-                    or _sort_by == "latest_version_date"
-                    or self.model._meta.get_field(_sort_by)
-                )
-            except FieldDoesNotExist:
-                return qs
-            qs = qs.order_by(sort_by)
-        else:
-            # default
-            if not qs.ordered:
+        # Get the sort and order parameters from the URL (with default values)
+        sort_by = self.request.GET.get('sort', None)  # Default sort by name
+        sort_order = self.request.GET.get('order', None)  # Default to ascending order
+
+        if sort_by and sort_order:
+            # Determine the correct sorting direction
+            if sort_order == 'desc':
+                sort_by = '-' + sort_by  # Prepend '-' to sort in descending order
+
+            # Validate the sort field
+            if sort_by.lstrip('-') in ['average_vote', 'latest_version_date'] or self._is_valid_field(sort_by.lstrip('-')):
+                qs = qs.order_by(sort_by)
+            elif not qs.ordered:
                 qs = qs.order_by(Lower("name"))
+
         return qs
+
+    def _is_valid_field(self, field_name):
+        try:
+            self.model._meta.get_field(field_name)
+            return True
+        except FieldDoesNotExist:
+            return False
 
     def get_context_data(self, **kwargs):
         context = super(PluginsList, self).get_context_data(**kwargs)
