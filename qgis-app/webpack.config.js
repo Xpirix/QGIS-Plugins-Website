@@ -32,12 +32,20 @@ const exposeLibraries = [
 ];
 
 module.exports = {
-  entry: './static/js/index',
+  entry: {
+    // Legacy JS + Bulma CSS bundle (used by Django templates)
+    main: './static/js/index',
+    // React application bundle
+    app: './static/js/react/index.jsx',
+  },
   output: {
     path: path.resolve('./static/bundles'),
     filename: "[name].[contenthash].js"
   },
   plugins: plugins,
+  resolve: {
+    extensions: ['.js', '.jsx'],
+  },
   module: {
     rules: [
       // Auto-generate expose-loader rules
@@ -62,7 +70,15 @@ module.exports = {
               }
             }
           ]
-      }
+      },
+      // Babel loader for JS/JSX (React support)
+      {
+        test: /\.(js|jsx)$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader',
+        },
+      },
     ],
   },
   stats: {

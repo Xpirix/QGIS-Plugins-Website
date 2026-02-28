@@ -15,18 +15,24 @@ from drf_yasg.views import get_schema_view
 # to find users app views
 # from users.views import *
 from homepage import homepage
+from plugins.api_views import ApiStatusView, PluginDetailView, PluginListView
 from rest_framework import permissions
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+    TokenVerifyView,
+)
 
 admin.autodiscover()
 
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="Hub API",
+        title="QGIS Plugins API",
         default_version="v1",
-        description="Hub API for sharing files application",
+        description="REST API for the QGIS Plugins Repository",
         terms_of_service="https://www.google.com/policies/terms/",
-        contact=openapi.Contact(email="email@example.com"),
+        contact=openapi.Contact(email="admin@qgis.org"),
         license=openapi.License(name="CC"),
     ),
     public=True,
@@ -47,6 +53,42 @@ urlpatterns = [
     # ABP: autosuggest for tags
     url(r"^taggit_autosuggest/", include("taggit_autosuggest.urls")),
     url(r"^userexport/", include("userexport.urls")),
+    # REST API v1
+    path("api/v1/", ApiStatusView.as_view(), name="api_v1_status"),
+    path("api/v1/plugins/", PluginListView.as_view(), name="api_plugin_list"),
+    path(
+        "api/v1/plugins/<str:package_name>/",
+        PluginDetailView.as_view(),
+        name="api_plugin_detail",
+    ),
+    # JWT authentication endpoints
+    path("api/v1/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path(
+        "api/v1/auth/token/refresh/",
+        TokenRefreshView.as_view(),
+        name="token_refresh",
+    ),
+    path(
+        "api/v1/auth/token/verify/",
+        TokenVerifyView.as_view(),
+        name="token_verify",
+    ),
+    # API documentation (Swagger / ReDoc)
+    url(
+        r"^api/v1/docs/swagger(?P<format>\.json|\.yaml)$",
+        schema_view.without_ui(cache_timeout=0),
+        name="schema-json",
+    ),
+    url(
+        r"^api/v1/docs/swagger/$",
+        schema_view.with_ui("swagger", cache_timeout=0),
+        name="schema-swagger-ui",
+    ),
+    url(
+        r"^api/v1/docs/redoc/$",
+        schema_view.with_ui("redoc", cache_timeout=0),
+        name="schema-redoc",
+    ),
 ]
 
 # ABP: temporary home page
