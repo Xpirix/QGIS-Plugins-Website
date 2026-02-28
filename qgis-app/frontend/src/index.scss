@@ -1,0 +1,63 @@
+/**
+ * Global Bulma CSS + QGIS Plugins custom styles.
+ * Bulma is imported from npm package.
+ */
+@use "bulma/sass" with (
+  $primary: #22961c,
+  $link: #22961c,
+  $family-sans-serif: BlinkMacSystemFont, -apple-system, "Segoe UI", "Roboto",
+    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans",
+    "Helvetica Neue", "Helvetica", "Arial", sans-serif,
+  $navbar-height: 3.5rem
+);
+
+// ── Custom styles ────────────────────────────────────────────────────────────
+
+body {
+  padding-top: 3.5rem; // account for fixed navbar
+}
+
+.plugin-icon {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+}
+
+.tag-cloud a {
+  margin: 0.15rem;
+  display: inline-flex;
+}
+
+.plugin-card {
+  transition: box-shadow 0.2s ease;
+
+  &:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  &.is-deprecated {
+    opacity: 0.7;
+  }
+}
+
+.star-rating {
+  color: #f5a623;
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+
+.menu .menu-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #777;
+}
+
+// ── Loading ───────────────────────────────────────────────────────────────────
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 4rem 0;
+}

@@ -161,7 +161,43 @@ class PluginDetailApiTestCase(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
-class JwtAuthEndpointTestCase(TestCase):
+class AppConfigApiTestCase(TestCase):
+    """Test the /api/v1/config/ endpoint."""
+
+    def test_config_anonymous(self):
+        response = self.client.get(reverse("api_config"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("user", data)
+        self.assertFalse(data["user"]["is_authenticated"])
+
+    def test_config_authenticated(self):
+        user = User.objects.create_user(
+            username="configuser", password="configpass"
+        )
+        self.client.login(username="configuser", password="configpass")
+        response = self.client.get(reverse("api_config"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["user"]["is_authenticated"])
+        self.assertEqual(data["user"]["username"], "configuser")
+
+
+class UserProfileApiTestCase(TestCase):
+    """Test the /api/v1/user/me/ endpoint."""
+
+    def test_user_me_requires_auth(self):
+        response = self.client.get(reverse("api_user_me"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_user_me_authenticated(self):
+        User.objects.create_user(username="meuser", password="mepass")
+        self.client.login(username="meuser", password="mepass")
+        response = self.client.get(reverse("api_user_me"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["username"], "meuser")
+
     """Test that the JWT token obtain/refresh endpoints are available."""
 
     def setUp(self):

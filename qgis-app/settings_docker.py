@@ -79,6 +79,8 @@ INSTALLED_APPS = [
     "matomo",
     # Webpack
     "webpack_loader",
+    # React SPA frontend app
+    "frontend",
 ]
 
 DATABASES = {
@@ -219,12 +221,22 @@ if SENTRY_DSN and SENTRY_DSN != "":
         traces_sample_rate=SENTRY_RATE,
     )
 
-# Webpack
+# Webpack – two separate configurations:
+# DEFAULT: legacy JS/CSS bundle for the old Django templates
+# FRONTEND: React TypeScript SPA bundle
 WEBPACK_LOADER = {
     "DEFAULT": {
         "BUNDLE_DIR_NAME": "bundles",
         "STATS_FILE": os.path.join(SITE_ROOT, "webpack-stats.json"),
-    }
+    },
+    "FRONTEND": {
+        "BUNDLE_DIR_NAME": "frontend/bundles/frontend/",
+        "STATS_FILE": os.path.join(
+            SITE_ROOT,
+            "frontend",
+            "webpack-stats.prod.json",
+        ),
+    },
 }
 
 CURRENT_QGIS_MAJOR_VERSION = os.environ.get("CURRENT_QGIS_MAJOR_VERSION", "3")

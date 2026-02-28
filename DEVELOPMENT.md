@@ -1,236 +1,255 @@
-# QGIS Plugins Website – Development & Production Guide
+# Development Guide – QGIS Plugins Website
 
-This document describes how to run the QGIS Plugins Website in both **development** and **production** environments using Docker Compose.
-
----
-
-## Architecture Overview
-
-| Layer | Technology |
-|-------|-----------|
-| Web framework | Django 4.2 |
-| REST API | Django Rest Framework (DRF) 3.14 + `djangorestframework-simplejwt` |
-| Frontend | ReactJS 18 (Webpack 5 / Babel 7) + Bulma CSS |
-| Database | PostgreSQL 16 + PostGIS |
-| Task queue | Celery + RabbitMQ |
-| Web server | Nginx (prod) / Django dev server (dev) |
-
-The REST API lives under `/api/v1/` and is documented via Swagger at `/api/v1/docs/swagger/`.  
-React components are compiled by Webpack and embedded in Django templates via `django-webpack-loader`.
+This guide explains how to run the project in development and production
+using the Docker Compose stack, and how to work with the new
+**Django REST Framework + React TypeScript** frontend.
 
 ---
 
-## Quick-start: Development Environment
+## Architecture overview
 
-### Prerequisites
-- Docker ≥ 24  
-- Docker Compose ≥ 2.20  
-- `make`
+| Layer | Technology | Location |
+|-------|-----------|----------|
+| Database | PostgreSQL + PostGIS | Docker service `db` |
+| Backend API | Django 4.2 + DRF | `qgis-app/` |
+| Frontend SPA | React 18 + TypeScript | `qgis-app/frontend/` |
+| Task queue | Celery + RabbitMQ | Docker services |
+| Bundler | webpack 5 | `qgis-app/frontend/webpack.config.js` |
+| Reverse proxy | Nginx | `deployment/` |
 
-### 1. Clone and configure
+The React SPA is built into static bundles by webpack and served via
+`django-webpack-loader`. Django serves the SPA shell (`app.html`) for
+every frontend route; React Router handles client-side navigation.
 
-```bash
-git clone https://github.com/Xpirix/QGIS-Plugins-Website.git
-cd QGIS-Plugins-Website/dockerize
-cp .env.template .env
-# Edit .env if you need to override defaults
-```
+Only the following URLs remain as real Django (non-SPA) views:
 
-### 2. Build and start
+| Pattern | Purpose |
+|---------|---------|
+| `/admin/` | Django admin |
+| `/api/v1/` | DRF REST API |
+| `/plugins/*.xml` | QGIS XML feed |
+| `/plugins/RPC2/` | XML-RPC |
+| `/plugins/*/version/*/download/` | Zip file download |
+| `/plugins/*/tokens/*` | CI/CD token management |
+| `/plugins/api/*/version/*/` | CI/CD token upload API |
 
-```bash
-make build-dev   # Build the development Docker image
-make devweb      # Start devweb + db + rabbitmq + worker + beat + webpack
-```
-
-This starts:
-- `devweb` – Django development server on **http://localhost:62202**
-- `webpack` – Webpack watch mode (React + CSS hot-rebuild)
-- `db` – PostgreSQL
-- `rabbitmq` – message broker
-- `worker` / `beat` – Celery
-
-### 3. Run migrations and seed fixtures
-
-```bash
-make devweb-migrate
-make dbseed        # optional: loads sample fixtures
-```
-
-### 4. Create a superuser
-
-```bash
-make devweb-exec c="python manage.py createsuperuser"
-```
-
-### 5. Access the site
-
-| URL | Description |
-|-----|-------------|
-| http://localhost:62202/ | Main website |
-| http://localhost:62202/api/v1/ | REST API status |
-| http://localhost:62202/api/v1/plugins/ | Plugin list (JSON) |
-| http://localhost:62202/api/v1/docs/swagger/ | Interactive API docs |
-| http://localhost:62202/admin/ | Django admin |
-
-### 6. React hot-reload
-
-Webpack runs in watch mode inside the `webpack` container and rebuilds bundles automatically whenever you edit files under `qgis-app/static/js/react/`.  
-Refresh the browser to see your changes.
+Everything else is served by the React SPA.
 
 ---
 
-## REST API Authentication
+## Prerequisites
 
-The project uses **JWT (JSON Web Tokens)** via `djangorestframework-simplejwt`.
+- **Docker** ≥ 24  
+- **Docker Compose** ≥ 2.20  
+- **Node.js** ≥ 18 (for local frontend development only)
 
-### Obtain tokens
+---
+
+## Development environment
+
+### 1. Copy environment files
 
 ```bash
-curl -X POST http://localhost:62202/api/v1/auth/token/ \
+cp deployment/docker-compose.override.example.yml deployment/docker-compose.override.yml
+# Edit as needed (DEBUG, SMTP, etc.)
+```
+
+### 2. Build and start services
+
+```bash
+cd deployment
+docker compose up --build
+```
+
+Django is available at **http://localhost** (or port defined in your
+override file).
+
+### 3. Run database migrations
+
+```bash
+docker compose exec django python manage.py migrate
+docker compose exec django python manage.py collectstatic --noinput
+docker compose exec django python manage.py createsuperuser
+```
+
+### 4. Build the React frontend (inside the container)
+
+```bash
+docker compose exec django bash -c "cd /home/web/django_project/frontend && npm ci && npm run build"
+```
+
+This writes `webpack-stats.prod.json` and the compiled JS/CSS bundles to
+`frontend/bundles/frontend/`. Django serves those files via `STATICFILES_DIRS`.
+
+### 5. (Optional) Live frontend development with hot-reload
+
+In a separate terminal, run webpack's dev server on your **host** machine:
+
+```bash
+cd qgis-app/frontend
+npm ci
+npm run serve
+```
+
+The dev server runs on `http://localhost:9000/`. Django must also be
+running so the API calls succeed. Update `WEBPACK_LOADER.FRONTEND.STATS_FILE`
+to point to `webpack-stats.dev.json` if you want Django to load bundles
+from the dev server.
+
+---
+
+## Production environment
+
+### 1. Set environment variables
+
+Create a `.env` file (or export variables):
+
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `DATABASE_NAME` | `qgis_plugins` | PostgreSQL DB name |
+| `DATABASE_USERNAME` | `qgis` | DB user |
+| `DATABASE_PASSWORD` | `secret` | DB password |
+| `DATABASE_HOST` | `db` | DB host |
+| `DEBUG` | `False` | Disable debug mode |
+| `SECRET_KEY` | `<long-random-string>` | Django secret key |
+| `MEDIA_ROOT` | `/home/web/media/` | Uploaded files |
+| `STATIC_ROOT` | `/home/web/static/` | Collected static files |
+| `ALLOWED_HOSTS` | `plugins.qgis.org` | Comma-separated hosts |
+| `BROKER_URL` | `amqp://rabbitmq:5672` | Celery broker |
+
+### 2. Build and deploy
+
+```bash
+cd deployment
+docker compose -f docker-compose.yml up -d --build
+docker compose exec django python manage.py migrate
+docker compose exec django python manage.py collectstatic --noinput
+```
+
+The frontend React bundles **must** be built before `collectstatic`:
+
+```bash
+docker compose exec django bash -c "cd /home/web/django_project/frontend && npm ci && npm run build"
+docker compose exec django python manage.py collectstatic --noinput
+```
+
+---
+
+## REST API reference
+
+Base URL: `/api/v1/`
+
+### Authentication
+
+```bash
+# Obtain JWT tokens
+curl -X POST /api/v1/auth/token/ \
   -H "Content-Type: application/json" \
-  -d '{"username": "your_user", "password": "your_password"}'
-```
+  -d '{"username": "user", "password": "pass"}'
 
-Response:
-```json
-{
-  "access": "<access_token>",
-  "refresh": "<refresh_token>"
-}
-```
+# Response: { "access": "...", "refresh": "..." }
 
-### Use the access token
-
-```bash
-curl http://localhost:62202/api/v1/plugins/ \
+# Use access token
+curl /api/v1/plugins/ \
   -H "Authorization: Bearer <access_token>"
-```
 
-### Refresh the access token
-
-```bash
-curl -X POST http://localhost:62202/api/v1/auth/token/refresh/ \
-  -H "Content-Type: application/json" \
+# Refresh
+curl -X POST /api/v1/auth/token/refresh/ \
   -d '{"refresh": "<refresh_token>"}'
 ```
 
-### Plugin-specific CI/CD tokens
+### Key endpoints
 
-For automated plugin uploads (CI/CD), each plugin has its own long-lived token.  
-Generate one through the web UI at `/plugins/<package_name>/tokens/`.
+| Method | URL | Description |
+|--------|-----|-------------|
+| GET | `/api/v1/` | API status |
+| GET | `/api/v1/config/` | App config (user info) |
+| GET | `/api/v1/plugins/` | List plugins (paginated) |
+| GET | `/api/v1/plugins/?filter=fresh` | New plugins |
+| GET | `/api/v1/plugins/?filter=popular` | Popular plugins |
+| GET | `/api/v1/plugins/?search=<q>` | Search plugins |
+| POST | `/api/v1/plugins/upload/` | Upload plugin (auth required) |
+| GET | `/api/v1/plugins/<name>/` | Plugin detail |
+| GET | `/api/v1/plugins/<name>/versions/<ver>/` | Version detail |
+| POST | `/api/v1/plugins/<name>/versions/<ver>/approve/` | Approve version |
+| POST | `/api/v1/plugins/<name>/versions/<ver>/unapprove/` | Unapprove |
+| DELETE | `/api/v1/plugins/<name>/versions/<ver>/delete/` | Delete version |
+| GET | `/api/v1/tags/` | All tags |
+| GET | `/api/v1/user/me/` | Current user (auth required) |
+| GET | `/api/v1/user/<username>/` | Public user profile |
+| POST | `/api/v1/user/<username>/trust/` | Trust user (staff only) |
+| POST | `/api/v1/user/<username>/block/` | Block user (staff only) |
 
----
+### Swagger UI
 
-## Production Environment
-
-### 1. Configure the environment
-
-```bash
-cd dockerize
-cp .env.template .env
-# Set production values:
-#   DATABASE_PASSWORD, SECRET_KEY, VIRTUAL_HOST, DOMAIN_NAME, etc.
-nano .env
-```
-
-### 2. Build production images
-
-```bash
-make build
-```
-
-### 3. Start all services
-
-```bash
-make run
-```
-
-This runs `migrate`, `collectstatic`, and starts `uwsgi`, `web` (Nginx), `worker`, `beat`, etc.
-
-### 4. SSL (Let's Encrypt)
-
-```bash
-make certbot   # Obtain / renew Let's Encrypt certificate
-```
-
-### Useful production commands
-
-| Command | Description |
-|---------|-------------|
-| `make migrate` | Apply pending database migrations |
-| `make collectstatic` | Collect static files |
-| `make uwsgi-shell` | Shell inside the `uwsgi` container |
-| `make uwsgi-logs` | Tail request logs |
-| `make uwsgi-errors` | Tail error logs |
-| `make web-logs` | Tail Nginx logs |
-| `make dbrestore` | Restore database from backup |
+Interactive API documentation: **http://localhost/api/v1/docs/swagger/**
 
 ---
 
-## Running Tests
+## Frontend development
 
-Tests are run inside Docker against a test database:
+The React SPA lives in `qgis-app/frontend/src/`.
 
-```bash
-make devweb-test   # Start the test container
+### Structure
 
-# Then inside the container:
-make devweb-exec c="python manage.py test plugins"
+```
+frontend/
+  src/
+    App.tsx            # React entry point
+    routes.tsx         # React Router routes
+    index.scss         # Global Bulma CSS + custom styles
+    context/
+      AuthContext.tsx  # JWT auth state
+    utils/
+      api.ts           # DRF API client (fetch-based)
+    components/
+      Navbar/          # Top navigation bar
+      Footer/          # Footer
+      Layout/          # Page layout wrapper
+      PluginCard/      # Plugin list card
+      Pagination/      # Pagination controls
+    pages/
+      Home/            # Landing page
+      PluginList/      # Plugin list with filters & search
+      PluginDetail/    # Plugin detail & version management
+      PluginUpload/    # Upload / new version form
+      Login/           # Sign-in page
+      UserPlugins/     # "My Plugins" / user profile
+      Docs/            # Documentation pages
+      NotFound/        # 404 page
+  webpack.config.js    # Webpack (TypeScript + Bulma)
+  package.json         # Node dependencies
+  tsconfig.json        # TypeScript config
+  templates/
+    base.html          # HTML shell (sets window globals from Django)
+    app.html           # Loads React bundles
 ```
 
-Or run a specific test module:
+### Adding a new page
 
-```bash
-make devweb-exec c="python manage.py test plugins.tests.test_token_auth"
-```
+1. Create `src/pages/MyPage/index.tsx`.
+2. Add a route in `src/routes.tsx`.
+3. Add an API endpoint in `plugins/api_views.py` if needed.
+4. Rebuild: `npm run build` (or `npm run serve` for hot-reload).
+
+### CSS / Theming
+
+Bulma CSS is imported in `src/index.scss` with QGIS green as the primary
+colour. Override Bulma variables in that file to adjust the theme.
 
 ---
 
-## React Frontend Development
+## Running tests
 
-The React application lives in `qgis-app/static/js/react/`.
+### Backend (Python)
 
-| File / Folder | Purpose |
-|---------------|---------|
-| `static/js/react/index.jsx` | Entry point – mounts components into Django pages |
-| `static/js/react/components/` | Reusable React components |
-| `static/js/react/hooks/` | Custom React hooks (e.g. `usePlugins` for DRF calls) |
-| `babel.config.json` | Babel presets for JSX + modern JS |
-| `webpack.config.js` | Two entry points: `main` (legacy) and `app` (React) |
-
-### Embedding React in a Django template
-
-Add a container element and include the `app` bundle:
-
-```html
-{% load render_bundle from webpack_loader %}
-{% render_bundle 'app' %}
-
-<!-- React will mount here -->
-<div id="react-plugin-list"></div>
+```bash
+docker compose exec django python manage.py test plugins.tests.test_api
 ```
 
-The available mount points are:
+### Frontend (Jest)
 
-| `id` | Component |
-|------|-----------|
-| `react-plugin-list` | `PluginList` – full paginated list with search |
-| `react-plugin-search` | `PluginSearch` – live search dropdown |
-
----
-
-## Environment Variables Reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_NAME` | `gis` | PostgreSQL database name |
-| `DATABASE_USERNAME` | `docker` | PostgreSQL user |
-| `DATABASE_PASSWORD` | `docker` | PostgreSQL password |
-| `DATABASE_HOST` | `db` | PostgreSQL host |
-| `DEBUG` | `True` | Django debug mode |
-| `RABBITMQ_HOST` | `rabbitmq` | Celery broker host |
-| `VIRTUAL_HOST` | `plugins.kartoza.com` | Nginx virtual host |
-| `DOMAIN_NAME` | `plugins.qgis.org` | Let's Encrypt domain |
-| `DEFAULT_FROM_EMAIL` | `no-reply-plugins@qgis.org` | Sender email |
-| `SENTRY_DSN` | *(empty)* | Sentry error tracking DSN |
+```bash
+cd qgis-app/frontend
+npm test
+```

@@ -108,16 +108,84 @@ class PluginSerializer(serializers.ModelSerializer):
         return url
 
 
+class PluginVersionDetailSerializer(PluginVersionSerializer):
+    """Full version serializer including downloads count."""
+
+    downloads = serializers.IntegerField(read_only=True)
+
+    class Meta(PluginVersionSerializer.Meta):
+        fields = PluginVersionSerializer.Meta.fields + ["downloads"]
+
+
 class PluginDetailSerializer(PluginSerializer):
-    """Extended serializer with version list for the detail endpoint."""
+    """Extended serializer with version list and permission flags."""
 
     versions = serializers.SerializerMethodField()
+    owners = UserSerializer(many=True, read_only=True)
+    can_edit = serializers.SerializerMethodField()
+    can_approve = serializers.SerializerMethodField()
 
     class Meta(PluginSerializer.Meta):
-        fields = PluginSerializer.Meta.fields + ["versions"]
+        fields = PluginSerializer.Meta.fields + [
+            "versions",
+            "owners",
+            "can_edit",
+            "can_approve",
+        ]
 
     def get_versions(self, obj):
-        versions = obj.pluginversion_set.filter(approved=True).order_by("-created_on")
-        return PluginVersionSerializer(
+        request = self.context.get("request")
+        # Staff and editors see all versions; others only approved ones
+        if request and request.user.is_authenticated and (
+            request.user.is_staff or request.user in obj.editors
+        ):
+            versions = obj.pluginversion_set.all().order_by("-created_on")
+        else:
+            versions = obj.pluginversion_set.filter(approved=True).order_by(
+                "-created_on"
+            )
+        return PluginVersionDetailSerializer(
             versions, many=True, context=self.context
         ).data
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return request.user.is_staff or request.user in obj.editors
+
+    def get_can_approve(self, obj):
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+        return request.user.is_staff or (
+            request.user in obj.editors
+            and request.user.has_perm("plugins.can_approve")
+        )
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Public user profile."""
+
+    is_trusted = serializers.SerializerMethodField()
+    plugins_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "email",
+            "is_staff",
+            "is_trusted",
+            "plugins_count",
+            "date_joined",
+        ]
+
+    def get_is_trusted(self, obj):
+        return obj.has_perm("plugins.can_approve")
+
+    def get_plugins_count(self, obj):
+        return Plugin.approved_objects.filter(created_by=obj).count()

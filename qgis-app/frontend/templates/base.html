@@ -1,0 +1,22 @@
+{% load static %}
+<!DOCTYPE html>
+<html class="has-navbar-fixed-top">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QGIS Plugins Repository</title>
+  <link rel="shortcut icon" href="{% static 'images/favicon.ico' %}" type="image/x-icon" />
+  {% block extra_css %}{% endblock %}
+</head>
+<script>
+  window.csrfToken = "{{ csrf_token }}";
+  window.isAuthenticated = {{ user.is_authenticated|lower }};
+  window.username = "{{ user.username|default:'' }}";
+  window.isStaff = {{ user.is_staff|lower }};
+  window.userFirstName = "{{ user.first_name|default:'' }}";
+  window.userLastName = "{{ user.last_name|default:'' }}";
+</script>
+<body>
+  {% block content %}{% endblock %}
+</body>
+</html>

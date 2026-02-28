@@ -1,14 +1,47 @@
 # -*- coding: utf-8 -*-
-from django.contrib.auth.decorators import login_required, user_passes_test
+"""
+plugins/urls.py
+
+Functional backend endpoints are kept as real Django views:
+- XML feeds (consumed by QGIS application)
+- RPC endpoint
+- Version file download
+- Token management (CI/CD token CRUD)
+- CI/CD upload/update API
+- Plugin rating
+
+All HTML page routes (previously Django template views) now serve the
+React SPA via FrontendView – React Router handles them client-side.
+Named URL patterns are preserved so that reverse() continues to work.
+"""
+
+from django.contrib.auth.decorators import login_required
 from django.urls import re_path as url
 from django.utils.translation import gettext_lazy as _
-from plugins.models import Plugin, PluginVersion
-from plugins.views import *
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.http import require_POST
+
+from djangoratings.views import AddRatingFromModel
+from frontend.views import FrontendView
+from plugins.models import Plugin
+from plugins.views import (
+    PluginTokenDetailView,
+    PluginTokenListView,
+    plugin_token_create,
+    plugin_token_delete,
+    plugin_token_update,
+    version_create_api,
+    version_download,
+    version_update_api,
+    xml_plugins,
+    xml_plugins_new,
+)
 from rpc4django.views import serve_rpc_request
 
-# Plugins filtered views (need user parameter from request)
+# ── Functional backend-only endpoints (NOT replaced by React) ──────────────────
+
 urlpatterns = [
-    # XML
+    # XML feeds (consumed by the QGIS application – must NOT change)
     url(r"^plugins_new.xml$", xml_plugins_new, {}, name="xml_plugins_new"),
     url(r"^plugins.xml$", xml_plugins, {}, name="xml_plugins"),
     url(
@@ -23,43 +56,33 @@ urlpatterns = [
         {},
         name="xml_plugins_version_filtered_uncached",
     ),
-    url(r"^tags/(?P<tags>[^\/]+)/$", TagsPluginsList.as_view(), name="tags_plugins"),
-    url(r"^add/$", plugin_upload, {}, name="plugin_upload"),
-    url(r"^add-empty/$", plugin_create_empty, {}, name="plugin_create_empty"),
-    url(r"^user/(?P<username>\w+)/block/$", user_block, {}, name="user_block"),
-    url(r"^user/(?P<username>\w+)/unblock/$", user_unblock, {}, name="user_unblock"),
-    url(r"^user/(?P<username>\w+)/trust/$", user_trust, {}, name="user_trust"),
-    url(r"^user/(?P<username>\w+)/untrust/$", user_untrust, {}, name="user_untrust"),
+
+    # RPC2 (used by QGIS)
+    url(r"^RPC2/$", serve_rpc_request),
+
+    # CI/CD token-based upload/update API
     url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/manage/$",
-        plugin_manage,
+        r"^api/(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/add/$",
+        version_create_api,
         {},
-        name="plugin_manage",
+        name="version_create_api",
     ),
     url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/delete/$",
-        plugin_delete,
+        r"^api/(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/update/$",
+        version_update_api,
         {},
-        name="plugin_delete",
+        name="version_update_api",
     ),
+
+    # Version file download (returns a zip; must stay as a real Django view)
     url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/restore/$",
-        plugin_restore,
+        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/download/$",
+        version_download,
         {},
-        name="plugin_restore",
+        name="version_download",
     ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/permanent-delete/$",
-        plugin_permanent_delete,
-        {},
-        name="plugin_permanent_delete",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/update/$",
-        plugin_update,
-        {},
-        name="plugin_update",
-    ),
+
+    # Token management (HTML form pages; kept as Django for CI/CD workflows)
     url(
         r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/tokens/$",
         PluginTokenListView.as_view(),
@@ -88,388 +111,8 @@ urlpatterns = [
         {},
         name="plugin_token_delete",
     ),
-    # Uncomment the following lines when ready to use featured plugins
-    # url(
-    #     r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/set_featured/$",
-    #     plugin_set_featured,
-    #     {},
-    #     name="plugin_set_featured",
-    # ),
-    # url(
-    #     r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/unset_featured/$",
-    #     plugin_unset_featured,
-    #     {},
-    #     name="plugin_unset_featured",
-    # ),
-    url(
-        r"^user/(?P<username>\w+)/admin$",
-        UserDetailsPluginsList.as_view(),
-        name="user_details",
-    ),
-    url(
-        r"^$",
-        PluginsList.as_view(
-            additional_context={
-                "title": _("All Plugins"),
-                "description": _("List of all approved plugins."),
-            }
-        ),
-        name="approved_plugins",
-    ),
-    url(
-        r"^my$",
-        login_required(
-            MyPluginsList.as_view(
-                additional_context={
-                    "title": _("My Plugins"),
-                    "description": _(
-                        "List of plugins created or maintained by the current user."
-                    ),
-                }
-            )
-        ),
-        name="my_plugins",
-    ),
-    # Uncomment the following lines when ready to use featured plugins
-    # url(
-    #     r"^featured/$",
-    #     PluginsList.as_view(
-    #         queryset=Plugin.featured_objects.all(),
-    #         additional_context={
-    #             "title": _("Featured Plugins"),
-    #             "description": _("List of approved plugins with the 'featured' flags set."),
-    #         },
-    #     ),
-    #     name="featured_plugins",
-    # ),
-    url(r"^user/(?P<username>\w+)/$", UserPluginsList.as_view(), name="user_plugins"),
-    url(
-        r"^server/$",
-        PluginsList.as_view(
-            queryset=Plugin.server_objects.all(),
-            additional_context={
-                "title": _("QGIS Server Plugins"),
-                "description": _("List of plugins specifically for QGIS Server."),
-            },
-        ),
-        name="server_plugins",
-    ),
-    url(
-        r"^unapproved/$",
-        PluginsList.as_view(
-            queryset=Plugin.unapproved_objects.all().order_by("-latest_version_date"),
-            additional_context={
-                "title": _("Unapproved Plugins"),
-                "description": _(
-                    "List of plugins that are not yet approved and not deprecated."
-                ),
-            },
-        ),
-        name="unapproved_plugins",
-    ),
-    url(
-        r"^deprecated/$",
-        PluginsList.as_view(
-            queryset=Plugin.deprecated_objects.all(),
-            additional_context={
-                "title": _("Deprecated Plugins"),
-                "description": _(
-                    "List of plugins that are no longer maintained or recommended."
-                ),
-            },
-        ),
-        name="deprecated_plugins",
-    ),
-    url(
-        r"^fresh/$",
-        PluginsList.as_view(
-            queryset=Plugin.fresh_objects.all(),
-            additional_context={
-                "title": _("New plugins"),
-                "description": _(
-                    "List of plugins that have been created in the last 30 days."
-                ),
-            },
-        ),
-        name="fresh_plugins",
-    ),
-    url(
-        r"^latest/$",
-        PluginsList.as_view(
-            queryset=Plugin.latest_objects.all(),
-            additional_context={
-                "title": _("Updated plugins"),
-                "description": _(
-                    "List of plugins that have been updated in the last 30 days."
-                ),
-            },
-        ),
-        name="latest_plugins",
-    ),
-    url(
-        r"^stable/$",
-        PluginsList.as_view(
-            queryset=Plugin.stable_objects.all(),
-            additional_context={
-                "title": _("Stable Plugins"),
-                "description": _(
-                    "List of approved plugins with at least one stable version."
-                ),
-            },
-        ),
-        name="stable_plugins",
-    ),
-    url(
-        r"^experimental/$",
-        PluginsList.as_view(
-            queryset=Plugin.experimental_objects.all(),
-            additional_context={
-                "title": _("Experimental Plugins"),
-                "description": _(
-                    "List of approved plugins with at least one experimental version."
-                ),
-            },
-        ),
-        name="experimental_plugins",
-    ),
-    url(
-        r"^new_qgis_ready/$",
-        PluginsList.as_view(
-            queryset=Plugin.new_qgis_ready_objects.all(),
-            additional_context={
-                "title": _(f"QGIS {settings.NEW_QGIS_MAJOR_VERSION} Ready Plugins"),
-                "description": _(
-                    f"List of approved plugins that are ready for QGIS {settings.NEW_QGIS_MAJOR_VERSION}."
-                ),
-            },
-        ),
-        name="new_qgis_ready_plugins",
-    ),
-    url(
-        r"^popular/$",
-        PluginsList.as_view(
-            queryset=Plugin.popular_objects.all(),
-            additional_context={
-                "title": _("Popular Plugins"),
-                "description": _(
-                    "List of approved plugins sorted by popularity. "
-                    "Popularity is calculated by the number of "
-                    "downloads and votes."
-                ),
-            },
-        ),
-        name="popular_plugins",
-    ),
-    url(
-        r"^most_voted/$",
-        PluginsList.as_view(
-            queryset=Plugin.most_voted_objects.all(),
-            additional_context={
-                "title": _("Most Voted Plugins"),
-                "description": _(
-                    "List of approved plugins sorted by the number of votes."
-                ),
-            },
-        ),
-        name="most_voted_plugins",
-    ),
-    url(
-        r"^most_downloaded/$",
-        PluginsList.as_view(
-            queryset=Plugin.most_downloaded_objects.all(),
-            additional_context={
-                "title": _("Most Downloaded Plugins"),
-                "description": _(
-                    "List of approved plugins sorted by the number of downloads."
-                ),
-            },
-        ),
-        name="most_downloaded_plugins",
-    ),
-    url(
-        r"^best_rated/$",
-        PluginsList.as_view(
-            queryset=Plugin.best_rated_objects.all(),
-            additional_context={
-                "title": _("Best Rated Plugins"),
-                "description": _(
-                    "List of approved plugins sorted by the number of ratings."
-                ),
-            },
-        ),
-        name="best_rated_plugins",
-    ),
-    url(
-        r"^feedback_completed/$",
-        FeedbackCompletedPluginsList.as_view(
-            additional_context={
-                "title": _("Reviewed Plugins (Resolved)"),
-                "description": _("List of unapproved plugins with resolved feedback."),
-            }
-        ),
-        name="feedback_completed_plugins",
-    ),
-    url(
-        r"^feedback_pending/$",
-        FeedbackPendingPluginsList.as_view(
-            additional_context={
-                "title": _("Awaiting review"),
-                "description": _(
-                    "List of unapproved plugins awaiting feedback review."
-                ),
-            }
-        ),
-        name="feedback_pending_plugins",
-    ),
-    url(
-        r"^awaiting_deletion/$",
-        AwaitingDeletionPluginsList.as_view(
-            additional_context={
-                "title": _("Awaiting Deletion"),
-                "description": _(
-                    "List of plugins marked for deletion. These plugins will be permanently deleted after 30 days."
-                ),
-            }
-        ),
-        name="awaiting_deletion_plugins",
-    ),
-    url(
-        r"^feedback_received/$",
-        FeedbackReceivedPluginsList.as_view(
-            additional_context={
-                "title": _("Reviewed Plugins (Pending)"),
-                "description": _("List of unapproved plugins with pending feedback."),
-            }
-        ),
-        name="feedback_received_plugins",
-    ),
-    url(
-        r"^author/(?P<author>[^/]+)/$",
-        AuthorPluginsList.as_view(),
-        name="author_plugins",
-    ),
-]
 
-
-# User management
-urlpatterns += [
-    url(
-        r"^user/(?P<username>\w+)/manage/$",
-        user_permissions_manage,
-        {},
-        name="user_permissions_manage",
-    ),
-]
-
-
-# Version Management
-urlpatterns += [
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/manage/$",
-        version_manage,
-        {},
-        name="version_manage",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/add/$",
-        version_create,
-        {},
-        name="version_create",
-    ),
-    url(
-        r"^api/(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/add/$",
-        version_create_api,
-        {},
-        name="version_create_api",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/$",
-        version_detail,
-        {},
-        name="version_detail",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/delete/$",
-        version_delete,
-        {},
-        name="version_delete",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/update/$",
-        version_update,
-        {},
-        name="version_update",
-    ),
-    url(
-        r"^api/(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/update/$",
-        version_update_api,
-        {},
-        name="version_update_api",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/download/$",
-        version_download,
-        {},
-        name="version_download",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/approve/$",
-        version_approve,
-        {},
-        name="version_approve",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/unapprove/$",
-        version_unapprove,
-        {},
-        name="version_unapprove",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/$",
-        version_feedback,
-        {},
-        name="version_feedback",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/update/$",
-        version_feedback_update,
-        {},
-        name="version_feedback_update",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/(?P<feedback>[0-9]+)/delete/$",
-        version_feedback_delete,
-        {},
-        name="version_feedback_delete",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/(?P<feedback>[0-9]+)/edit/$",
-        version_feedback_edit,
-        {},
-        name="version_feedback_edit",
-    ),
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/bulk_delete_versions/$",
-        versions_bulk_delete,
-        {},
-        name="versions_bulk_delete",
-    ),
-]
-
-# RPC
-urlpatterns += [
-    # rpc4django will need to be in your Python path
-    url(r"^RPC2/$", serve_rpc_request),
-]
-
-
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from django.views.decorators.http import require_POST
-
-# plugin rating
-from djangoratings.views import AddRatingFromModel
-
-urlpatterns += [
+    # Plugin rating
     url(
         r"rate/(?P<object_id>\d+)/(?P<score>\d+)/",
         require_POST(csrf_protect(AddRatingFromModel())),
@@ -482,15 +125,69 @@ urlpatterns += [
     ),
 ]
 
+# ── React SPA – page routes (FrontendView serves app.html for all of these) ────
+# Named patterns are preserved so that reverse() still works throughout the codebase.
 
-# Plugin detail (keep last)
+spa = FrontendView.as_view()
+
 urlpatterns += [
-    url(
-        r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/$",
-        PluginDetailView.as_view(
-            slug_url_kwarg="package_name",
-            slug_field="package_name",
-        ),
-        name="plugin_detail",
-    ),
+    # Plugin lists
+    url(r"^$", spa, name="approved_plugins"),
+    url(r"^my$", login_required(spa), name="my_plugins"),
+    url(r"^add/$", login_required(spa), name="plugin_upload"),
+    url(r"^add-empty/$", login_required(spa), name="plugin_create_empty"),
+    url(r"^fresh/$", spa, name="fresh_plugins"),
+    url(r"^latest/$", spa, name="latest_plugins"),
+    url(r"^stable/$", spa, name="stable_plugins"),
+    url(r"^experimental/$", spa, name="experimental_plugins"),
+    url(r"^server/$", spa, name="server_plugins"),
+    url(r"^deprecated/$", spa, name="deprecated_plugins"),
+    url(r"^popular/$", spa, name="popular_plugins"),
+    url(r"^most_voted/$", spa, name="most_voted_plugins"),
+    url(r"^most_downloaded/$", spa, name="most_downloaded_plugins"),
+    url(r"^best_rated/$", spa, name="best_rated_plugins"),
+    url(r"^unapproved/$", spa, name="unapproved_plugins"),
+    url(r"^featured/$", spa, name="featured_plugins"),
+    url(r"^new_qgis_ready/$", spa, name="new_qgis_ready_plugins"),
+    url(r"^feedback_completed/$", spa, name="feedback_completed_plugins"),
+    url(r"^feedback_pending/$", spa, name="feedback_pending_plugins"),
+    url(r"^feedback_received/$", spa, name="feedback_received_plugins"),
+    url(r"^awaiting_deletion/$", spa, name="awaiting_deletion_plugins"),
+
+    # Filtered lists by tag / user / author
+    url(r"^tags/(?P<tags>[^\/]+)/$", spa, name="tags_plugins"),
+    url(r"^user/(?P<username>\w+)/$", spa, name="user_plugins"),
+    url(r"^user/(?P<username>\w+)/admin$", spa, name="user_details"),
+    url(r"^author/(?P<author>[^/]+)/$", spa, name="author_plugins"),
+
+    # Plugin CRUD (now handled via DRF API; these serve the SPA shell)
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/manage/$", spa, name="plugin_manage"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/update/$", login_required(spa), name="plugin_update"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/delete/$", login_required(spa), name="plugin_delete"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/restore/$", login_required(spa), name="plugin_restore"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/permanent-delete/$", login_required(spa), name="plugin_permanent_delete"),
+
+    # User management pages
+    url(r"^user/(?P<username>\w+)/block/$", spa, name="user_block"),
+    url(r"^user/(?P<username>\w+)/unblock/$", spa, name="user_unblock"),
+    url(r"^user/(?P<username>\w+)/trust/$", spa, name="user_trust"),
+    url(r"^user/(?P<username>\w+)/untrust/$", spa, name="user_untrust"),
+    url(r"^user/(?P<username>\w+)/manage/$", spa, name="user_permissions_manage"),
+
+    # Version management pages
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/add/$", login_required(spa), name="version_create"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/manage/$", spa, name="version_manage"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/$", spa, name="version_detail"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/delete/$", login_required(spa), name="version_delete"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/update/$", login_required(spa), name="version_update"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/approve/$", spa, name="version_approve"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/unapprove/$", spa, name="version_unapprove"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/$", spa, name="version_feedback"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/update/$", spa, name="version_feedback_update"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/(?P<feedback>[0-9]+)/delete/$", spa, name="version_feedback_delete"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/version/(?P<version>[^\/]+)/feedback/(?P<feedback>[0-9]+)/edit/$", spa, name="version_feedback_edit"),
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/bulk_delete_versions/$", spa, name="versions_bulk_delete"),
+
+    # Plugin detail (must be LAST to avoid shadowing other patterns)
+    url(r"^(?P<package_name>[A-Za-z][A-Za-z0-9-_]+)/$", spa, name="plugin_detail"),
 ]
