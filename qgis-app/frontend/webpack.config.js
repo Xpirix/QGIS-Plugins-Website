@@ -1,0 +1,114 @@
+const path = require("path");
+const BundleTracker = require("webpack-bundle-tracker");
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
+const ReactRefreshWebpackPlugin = require("@pmmmwh/react-refresh-webpack-plugin");
+const webpack = require("webpack");
+
+const mode = process.env.npm_lifecycle_script || "build";
+const isDev = mode.includes("serve") || mode.includes("dev");
+const isServe = mode.includes("serve");
+const filename = isDev ? "[name]" : "[name].[fullhash]";
+const statsFilename = isDev
+  ? "webpack-stats.dev.json"
+  : "webpack-stats.prod.json";
+const minimized = !isDev;
+
+let conf = {
+  entry: {
+    App: "./src/App.tsx",
+  },
+  output: {
+    path: path.resolve(__dirname, "./bundles/frontend"),
+    filename: filename + ".js",
+  },
+  module: {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        exclude: /node_modules/,
+        use: [{ loader: "ts-loader" }],
+      },
+      {
+        test: /\.s[ac]ss$/i,
+        use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
+      },
+      {
+        test: /\.css$/i,
+        use: [MiniCssExtractPlugin.loader, "css-loader"],
+      },
+    ],
+  },
+  optimization: {
+    minimize: minimized,
+    splitChunks: {
+      cacheGroups: {
+        styles: {
+          name: "styles",
+          type: "css/mini-extract",
+          chunks: "all",
+          enforce: true,
+        },
+      },
+    },
+  },
+  plugins: [
+    new webpack.DefinePlugin({
+      "process.env.NODE_DEBUG": JSON.stringify(process.env.NODE_DEBUG),
+    }),
+    new CleanWebpackPlugin(),
+    new BundleTracker({
+      path: path.resolve(__dirname),
+      filename: statsFilename,
+    }),
+    new MiniCssExtractPlugin({
+      filename: filename + ".css",
+      chunkFilename: filename + ".css",
+      ignoreOrder: true,
+    }),
+  ],
+  resolve: {
+    modules: ["node_modules"],
+    extensions: [".ts", ".tsx", ".js", ".css", ".scss"],
+    fallback: {
+      fs: false,
+    },
+  },
+  watchOptions: {
+    ignored: ["node_modules", "./**/*.py"],
+    aggregateTimeout: 300,
+    poll: 1000,
+  },
+};
+
+if (isServe) {
+  conf.output = {
+    path: path.resolve(__dirname, "./bundles/frontend"),
+    filename: filename + ".js",
+    publicPath: "http://localhost:9000/static/",
+  };
+
+  conf.devServer = {
+    hot: true,
+    port: 9000,
+    allowedHosts: "all",
+    compress: true,
+    static: false,
+    devMiddleware: {
+      publicPath: "/static/",
+      writeToDisk: true,
+    },
+    headers: { "Access-Control-Allow-Origin": "*" },
+  };
+
+  conf.devtool = "inline-source-map";
+  conf.plugins.push(new ReactRefreshWebpackPlugin());
+} else if (isDev) {
+  conf.output = {
+    path: path.resolve(__dirname, "./bundles/frontend"),
+    filename: filename + ".js",
+  };
+  conf.devtool = "inline-source-map";
+}
+
+module.exports = conf;

@@ -79,6 +79,8 @@ INSTALLED_APPS = [
     "matomo",
     # Webpack
     "webpack_loader",
+    # React SPA frontend app
+    "frontend",
 ]
 
 DATABASES = {
@@ -125,6 +127,19 @@ FILE_UPLOAD_PERMISSIONS = 0o644
 
 REST_FRAMEWORK = {
     "TEST_REQUEST_DEFAULT_FORMAT": "json",
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticatedOrReadOnly",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+    "DEFAULT_FILTER_BACKENDS": [
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
 }
 
 GEOIP_PATH = "/var/opt/maxmind/"
@@ -206,12 +221,22 @@ if SENTRY_DSN and SENTRY_DSN != "":
         traces_sample_rate=SENTRY_RATE,
     )
 
-# Webpack
+# Webpack – two separate configurations:
+# DEFAULT: legacy JS/CSS bundle for the old Django templates
+# FRONTEND: React TypeScript SPA bundle
 WEBPACK_LOADER = {
     "DEFAULT": {
         "BUNDLE_DIR_NAME": "bundles",
         "STATS_FILE": os.path.join(SITE_ROOT, "webpack-stats.json"),
-    }
+    },
+    "FRONTEND": {
+        "BUNDLE_DIR_NAME": "frontend/bundles/frontend/",
+        "STATS_FILE": os.path.join(
+            SITE_ROOT,
+            "frontend",
+            "webpack-stats.prod.json",
+        ),
+    },
 }
 
 CURRENT_QGIS_MAJOR_VERSION = os.environ.get("CURRENT_QGIS_MAJOR_VERSION", "3")

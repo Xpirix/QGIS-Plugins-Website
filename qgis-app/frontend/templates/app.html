@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% load render_bundle from webpack_loader %}
+
+{% block extra_css %}
+  {% render_bundle 'App' 'css' config='FRONTEND' %}
+{% endblock %}
+
+{% block content %}
+<div id="app"></div>
+{% render_bundle 'App' 'js' config='FRONTEND' %}
+{% endblock %}
